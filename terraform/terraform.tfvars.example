@@ -1,4 +1,6 @@
-aws_region = "us-east-1"
-ssh_public_key_path = "/home/jrcristiano/.ssh/id_rsa.pub"
-ec2_instance_type = "t3.micro"
-app_port = 3000
+aws_region            = "us-east-1"
+ssh_public_key_path   = "/home/ubuntu/.ssh/id_rsa_aws.pub"
+ssh_allowed_cidr      = ["203.0.113.5/32"] # Replace with your IP: curl -s ifconfig.me
+ec2_instance_type     = "t3.micro"
+ecr_repository_name   = "api-terraform"
+app_port              = 3000

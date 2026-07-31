@@ -12,7 +12,7 @@ provider "aws" {
 }
 
 resource "aws_ecr_repository" "app" {
-  name = "api-terraform-app"
+  name = var.ecr_repository_name
   image_scanning_configuration {
     scan_on_push = true
   }
@@ -25,15 +25,18 @@ resource "aws_key_pair" "deploy_key" {
 
 resource "aws_security_group" "ec2_sg" {
   name        = "api-terraform-ec2-sg"
-  description = "Allow SSH and HTTP traffic"
+  description = "API server security group"
   vpc_id      = data.aws_vpc.default.id
 
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+  dynamic "ingress" {
+    for_each = length(var.ssh_allowed_cidr) > 0 ? [1] : []
+    content {
+      description = "SSH"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = var.ssh_allowed_cidr
+    }
   }
 
   ingress {
@@ -54,7 +57,7 @@ resource "aws_security_group" "ec2_sg" {
 }
 
 resource "aws_instance" "app_server" {
-  ami                         = data.aws_ami.ubuntu.id
+  ami                         = data.aws_ssm_parameter.ubuntu_ami.value
   instance_type               = var.ec2_instance_type
   subnet_id                   = data.aws_subnets.default.ids[0]
   vpc_security_group_ids      = [aws_security_group.ec2_sg.id]
@@ -76,35 +79,27 @@ data "aws_vpc" "default" {
   default = true
 }
 
+data "aws_ec2_instance_type_offerings" "app" {
+  filter {
+    name   = "instance-type"
+    values = [var.ec2_instance_type]
+  }
+
+  location_type = "availability-zone"
+}
+
 data "aws_subnets" "default" {
   filter {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+
+  filter {
+    name   = "availability-zone"
+    values = data.aws_ec2_instance_type_offerings.app.locations
+  }
 }
 
-data "aws_ami" "ubuntu" {
-  most_recent = true
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
-
-  filter {
-    name   = "architecture"
-    values = ["x86_64"]
-  }
-
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-24.04-amd64-server-*"]
-  }
-
-  owners = ["099720109477"]
+data "aws_ssm_parameter" "ubuntu_ami" {
+  name = "/aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }

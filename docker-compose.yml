@@ -2,9 +2,15 @@ version: '3.9'
 
 services:
   api:
-    build: .
+    image: ${DOCKER_IMAGE:-api-terraform:latest}
     ports:
       - '3000:3000'
     environment:
       - PORT=3000
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/posts"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

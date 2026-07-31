@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AWS_REGION: us-east-1
-      DOCKER_IMAGE_NAME: api-terraform-app
+      IMAGE_TAG: ${{ github.sha }}
+      ECR_URL: ${{ secrets.ECR_REPOSITORY_URL }}
 
     steps:
       - name: Checkout repository
@@ -38,23 +39,31 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        id: login-ecr
         run: |
-          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_URL
 
-      - name: Build Docker image
+      - name: Build and tag Docker image
         run: |
-          docker build -t $DOCKER_IMAGE_NAME .
+          docker build -t api-terraform-app .
+          docker tag api-terraform-app $ECR_URL:latest
+          docker tag api-terraform-app $ECR_URL:$IMAGE_TAG
 
-      - name: Tag Docker image for ECR
+      - name: Push images to ECR
         run: |
-          docker tag $DOCKER_IMAGE_NAME ${{ secrets.ECR_REPOSITORY_URL }}:latest
+          docker push $ECR_URL:latest
+          docker push $ECR_URL:$IMAGE_TAG
 
-      - name: Push image to ECR
-        run: |
-          docker push ${{ secrets.ECR_REPOSITORY_URL }}:latest
+      - name: Copy docker-compose to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: 22
+          source: docker-compose.yml
+          target: /home/ubuntu/
 
-      - name: Deploy to EC2 via SSH
+      - name: Save current image tag for rollback
         uses: appleboy/ssh-action@v0.1.8
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -62,17 +71,62 @@ jobs:
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
           script: |
-            sudo apt-get update -y
-            sudo apt-get install -y docker.io docker-compose awscli
+            RUNNING_IMAGE=$(sudo docker ps -q --filter "name=api" | head -1 | xargs -r sudo docker inspect --format='{{.Config.Image}}')
+            if [ -n "$RUNNING_IMAGE" ]; then
+              echo "$RUNNING_IMAGE" | sudo tee /home/ubuntu/.previous-image
+              echo "Saved previous image: $RUNNING_IMAGE"
+            else
+              echo "${{ secrets.ECR_REPOSITORY_URL }}:latest" | sudo tee /home/ubuntu/.previous-image
+              echo "No running container found; fallback to latest"
+            fi
+
+      - name: Deploy to EC2
+        id: deploy
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            sudo apt-get update -qq -y
+            sudo apt-get install -y docker.io awscli
             sudo systemctl enable docker
             sudo systemctl start docker
-            echo "version: '3.9'" > ~/docker-compose.yml
-            echo "services:" >> ~/docker-compose.yml
-            echo "  api:" >> ~/docker-compose.yml
-            echo "    image: ${{ secrets.ECR_REPOSITORY_URL }}:latest" >> ~/docker-compose.yml
-            echo "    ports:" >> ~/docker-compose.yml
-            echo "      - '3000:3000'" >> ~/docker-compose.yml
-            echo "    restart: unless-stopped" >> ~/docker-compose.yml
-            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
-            cd ~ && sudo docker-compose pull
-            cd ~ && sudo docker-compose up -d
+
+            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
+
+            cd /home/ubuntu
+            DOCKER_IMAGE=${{ secrets.ECR_REPOSITORY_URL }}:latest sudo -E docker compose pull
+            DOCKER_IMAGE=${{ secrets.ECR_REPOSITORY_URL }}:latest sudo -E docker compose up -d --force-recreate
+
+      - name: Smoke test
+        id: smoke
+        run: |
+          echo "Waiting for container to be healthy..."
+          for i in $(seq 1 12); do
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://${{ secrets.EC2_HOST }}:3000/api/posts || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "Smoke test passed — HTTP $STATUS"
+              exit 0
+            fi
+            echo "Attempt $i/12 — HTTP $STATUS, retrying in 5s..."
+            sleep 5
+          done
+          echo "Smoke test FAILED after 12 attempts"
+          exit 1
+
+      - name: Rollback to previous image
+        if: failure() && steps.deploy.outcome == 'success'
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            echo "Rolling back..."
+            PREVIOUS_IMAGE=$(sudo cat /home/ubuntu/.previous-image)
+            echo "Redeploying previous image: $PREVIOUS_IMAGE"
+            cd /home/ubuntu
+            DOCKER_IMAGE=$PREVIOUS_IMAGE sudo -E docker compose up -d --force-recreate
