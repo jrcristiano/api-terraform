@@ -53,65 +53,30 @@ jobs:
           docker push $ECR_URL:latest
           docker push $ECR_URL:$IMAGE_TAG
 
-      - name: Copy compose and nginx config to EC2
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          source: docker-compose.yml,nginx.conf
-          target: /home/ubuntu/
+      - name: Setup Ansible
+        run: |
+          python3 -m pip install --user ansible
 
-      - name: Save current image tag for rollback
-        uses: appleboy/ssh-action@v0.1.8
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          script: |
-            RUNNING_IMAGE=$(sudo docker ps -q --filter "name=api" | head -1 | xargs -r sudo docker inspect --format='{{.Config.Image}}')
-            if [ -n "$RUNNING_IMAGE" ]; then
-              echo "$RUNNING_IMAGE" | sudo tee /home/ubuntu/.previous-image
-              echo "Saved previous image: $RUNNING_IMAGE"
-            else
-              echo "${{ secrets.ECR_REPOSITORY_URL }}:latest" | sudo tee /home/ubuntu/.previous-image
-              echo "No running container found; fallback to latest"
-            fi
+      - name: Write SSH private key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/ansible_key
+          chmod 600 ~/.ssh/ansible_key
 
-      - name: Deploy to EC2
+      - name: Deploy with Ansible
         id: deploy
-        uses: appleboy/ssh-action@v0.1.8
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION
-          script: |
-            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-            export AWS_REGION=$AWS_REGION
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          echo "${{ secrets.EC2_HOST }}" > ansible_host.txt
 
-            sudo apt-get update -qq -y
-            sudo apt-get install -y docker.io docker-compose-v2 unzip
-            sudo systemctl enable docker
-            sudo systemctl start docker
-
-            # Install AWS CLI v2 (not available as apt package on Noble)
-            if ! command -v aws &>/dev/null; then
-              curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
-              unzip -q /tmp/awscliv2.zip -d /tmp
-              sudo /tmp/aws/install
-              rm -rf /tmp/aws /tmp/awscliv2.zip
-            fi
-
-            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
-
-            cd /home/ubuntu
-            sudo DOCKER_IMAGE="${{ secrets.ECR_REPOSITORY_URL }}:latest" docker compose pull
-            sudo DOCKER_IMAGE="${{ secrets.ECR_REPOSITORY_URL }}:latest" docker compose up -d --force-recreate
+          ansible-playbook -i "$(cat ansible_host.txt)," \
+            -u ubuntu \
+            --private-key ~/.ssh/ansible_key \
+            -e "ecr_repository_url=${{ secrets.ECR_REPOSITORY_URL }}" \
+            -e "aws_region=${{ env.AWS_REGION }}" \
+            -e "image_tag=${{ env.IMAGE_TAG }}" \
+            ansible/playbook.yml
 
       - name: Smoke test
         id: smoke
@@ -129,23 +94,20 @@ jobs:
           echo "Smoke test FAILED after 12 attempts"
           exit 1
 
-      - name: Rollback to previous image
+      - name: Rollback with Ansible
         if: failure() && steps.deploy.outcome == 'success'
-        uses: appleboy/ssh-action@v0.1.8
-        with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ubuntu
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          port: 22
-          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION
-          script: |
-            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-            export AWS_REGION=$AWS_REGION
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: "False"
+        run: |
+          PREVIOUS_IMAGE=$(ansible all -i "$(cat ansible_host.txt)," \
+            -u ubuntu --private-key ~/.ssh/ansible_key \
+            -m ansible.builtin.shell \
+            -a "cat /home/ubuntu/.previous-image" | tail -1)
 
-            echo "Rolling back..."
-            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
-            PREVIOUS_IMAGE=$(sudo cat /home/ubuntu/.previous-image)
-            echo "Redeploying previous image: $PREVIOUS_IMAGE"
-            cd /home/ubuntu
-            sudo DOCKER_IMAGE="$PREVIOUS_IMAGE" docker compose up -d --force-recreate
+          ansible-playbook -i "$(cat ansible_host.txt)," \
+            -u ubuntu \
+            --private-key ~/.ssh/ansible_key \
+            -e "ecr_repository_url=${{ secrets.ECR_REPOSITORY_URL }}" \
+            -e "aws_region=${{ env.AWS_REGION }}" \
+            -e "image_tag=latest" \
+            ansible/playbook.yml

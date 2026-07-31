@@ -12,7 +12,8 @@ provider "aws" {
 }
 
 resource "aws_ecr_repository" "app" {
-  name = var.ecr_repository_name
+  name         = var.ecr_repository_name
+  force_delete = true
   image_scanning_configuration {
     scan_on_push = true
   }
@@ -67,12 +68,6 @@ resource "aws_instance" "app_server" {
   tags = {
     Name = "api-terraform-ec2"
   }
-
-  user_data = templatefile("${path.module}/user_data.sh.tpl", {
-    ecr_repository = aws_ecr_repository.app.repository_url
-    aws_region     = var.aws_region
-    port           = var.app_port
-  })
 }
 
 resource "aws_eip" "app" {
