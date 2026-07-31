@@ -17,17 +17,44 @@ if ! command -v aws &>/dev/null; then
   rm -rf /tmp/aws /tmp/awscliv2.zip
 fi
 
-cat > /home/ubuntu/docker-compose.yml <<'EOF'
-version: '3.9'
+cat > /home/ubuntu/nginx.conf <<'NGINXEOF'
+server {
+    listen 80;
+
+    location / {
+        proxy_pass http://api:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+NGINXEOF
+
+cat > /home/ubuntu/docker-compose.yml <<'COMPOSEEOF'
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "${port}:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
   api:
     image: "${ecr_repository}:latest"
-    ports:
-      - "${port}:${port}"
+    environment:
+      - PORT=3000
     restart: unless-stopped
-EOF
+COMPOSEEOF
 
-chown ubuntu:ubuntu /home/ubuntu/docker-compose.yml
+chown ubuntu:ubuntu /home/ubuntu/nginx.conf /home/ubuntu/docker-compose.yml
 
 su - ubuntu -c "docker login -u AWS -p \$(aws ecr get-login-password --region ${aws_region}) ${ecr_repository}"
 su - ubuntu -c "cd /home/ubuntu && docker compose pull"

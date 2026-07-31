@@ -53,14 +53,14 @@ jobs:
           docker push $ECR_URL:latest
           docker push $ECR_URL:$IMAGE_TAG
 
-      - name: Copy docker-compose to EC2
+      - name: Copy compose and nginx config to EC2
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
-          source: docker-compose.yml
+          source: docker-compose.yml,nginx.conf
           target: /home/ubuntu/
 
       - name: Save current image tag for rollback
@@ -118,7 +118,7 @@ jobs:
         run: |
           echo "Waiting for container to be healthy..."
           for i in $(seq 1 12); do
-            STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://${{ secrets.EC2_HOST }}:3000/api/posts || echo "000")
+            STATUS=$(curl -s -o /dev/null -w '%{http_code}' http://${{ secrets.EC2_HOST }}/api/posts || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "Smoke test passed — HTTP $STATUS"
               exit 0

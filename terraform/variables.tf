@@ -31,5 +31,5 @@ variable "ecr_repository_name" {
 variable "app_port" {
   description = "Application port exposed on EC2"
   type        = number
-  default     = 3000
+  default     = 80
 }
