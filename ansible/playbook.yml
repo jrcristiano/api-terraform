@@ -5,6 +5,8 @@
   vars:
     app_port: 80
     image_tag: "{{ lookup('env', 'IMAGE_TAG') | default('latest', true) }}"
+    aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default('') }}"
+    aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('') }}"
 
   tasks:
     - name: Install required system packages
@@ -81,11 +83,12 @@
 
     - name: Log in to Amazon ECR
       shell: |
-        set -o pipefail
         aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin {{ ecr_repository_url }}
+      args:
+        executable: /bin/bash
       environment:
-        AWS_ACCESS_KEY_ID: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
-        AWS_SECRET_ACCESS_KEY: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
 
     - name: Pull container images
       shell: |
