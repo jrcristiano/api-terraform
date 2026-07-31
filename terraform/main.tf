@@ -75,6 +75,19 @@ resource "aws_instance" "app_server" {
   })
 }
 
+resource "aws_eip" "app" {
+  domain = "vpc"
+
+  tags = {
+    Name = "api-terraform-eip"
+  }
+}
+
+resource "aws_eip_association" "app" {
+  instance_id   = aws_instance.app_server.id
+  allocation_id = aws_eip.app.id
+}
+
 data "aws_vpc" "default" {
   default = true
 }
@@ -102,4 +115,14 @@ data "aws_subnets" "default" {
 
 data "aws_ssm_parameter" "ubuntu_ami" {
   name = "/aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id"
+}
+
+output "public_ip" {
+  description = "Elastic IP of the EC2 instance"
+  value       = aws_eip.app.public_ip
+}
+
+output "public_dns" {
+  description = "Public DNS of the EC2 instance"
+  value       = aws_instance.app_server.public_dns
 }
