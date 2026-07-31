@@ -88,7 +88,12 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION
           script: |
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+            export AWS_REGION=$AWS_REGION
+
             sudo apt-get update -qq -y
             sudo apt-get install -y docker.io docker-compose-v2 unzip
             sudo systemctl enable docker
@@ -102,7 +107,7 @@ jobs:
               rm -rf /tmp/aws /tmp/awscliv2.zip
             fi
 
-            aws ecr get-login-password --region ${{ env.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
+            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
 
             cd /home/ubuntu
             DOCKER_IMAGE=${{ secrets.ECR_REPOSITORY_URL }}:latest sudo -E docker compose pull
@@ -132,8 +137,14 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
           port: 22
+          envs: AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,AWS_REGION
           script: |
+            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+            export AWS_REGION=$AWS_REGION
+
             echo "Rolling back..."
+            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
             PREVIOUS_IMAGE=$(sudo cat /home/ubuntu/.previous-image)
             echo "Redeploying previous image: $PREVIOUS_IMAGE"
             cd /home/ubuntu
