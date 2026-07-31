@@ -83,6 +83,58 @@ resource "aws_eip_association" "app" {
   allocation_id = aws_eip.app.id
 }
 
+# -- IAM deployer user (programmatic access for CI/CD) --
+
+resource "aws_iam_user" "deployer" {
+  name = "api-terraform-deployer"
+}
+
+resource "aws_iam_access_key" "deployer" {
+  user = aws_iam_user.deployer.name
+}
+
+resource "aws_iam_policy" "deployer" {
+  name = "api-terraform-deployer-policy"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages",
+          "ecr:DescribeRepositories",
+          "ecr:ListImages",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeInstanceStatus",
+        ]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+resource "aws_iam_user_policy_attachment" "deployer" {
+  user       = aws_iam_user.deployer.name
+  policy_arn = aws_iam_policy.deployer.arn
+}
+
+# -- Data sources --
+
 data "aws_vpc" "default" {
   default = true
 }
@@ -120,4 +172,16 @@ output "public_ip" {
 output "public_dns" {
   description = "Public DNS of the EC2 instance"
   value       = aws_instance.app_server.public_dns
+}
+
+output "deployer_access_key_id" {
+  description = "Access key ID for the deployer IAM user"
+  value       = aws_iam_access_key.deployer.id
+  sensitive   = true
+}
+
+output "deployer_secret_access_key" {
+  description = "Secret access key for the deployer IAM user"
+  value       = aws_iam_access_key.deployer.secret
+  sensitive   = true
 }
