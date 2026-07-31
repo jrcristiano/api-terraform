@@ -1,0 +1,78 @@
+name: CI/CD Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      DOCKER_IMAGE_NAME: api-terraform-app
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build project
+        run: npm run build
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
+
+      - name: Build Docker image
+        run: |
+          docker build -t $DOCKER_IMAGE_NAME .
+
+      - name: Tag Docker image for ECR
+        run: |
+          docker tag $DOCKER_IMAGE_NAME ${{ secrets.ECR_REPOSITORY_URL }}:latest
+
+      - name: Push image to ECR
+        run: |
+          docker push ${{ secrets.ECR_REPOSITORY_URL }}:latest
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v0.1.8
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io docker-compose awscli
+            sudo systemctl enable docker
+            sudo systemctl start docker
+            echo "version: '3.9'" > ~/docker-compose.yml
+            echo "services:" >> ~/docker-compose.yml
+            echo "  api:" >> ~/docker-compose.yml
+            echo "    image: ${{ secrets.ECR_REPOSITORY_URL }}:latest" >> ~/docker-compose.yml
+            echo "    ports:" >> ~/docker-compose.yml
+            echo "      - '3000:3000'" >> ~/docker-compose.yml
+            echo "    restart: unless-stopped" >> ~/docker-compose.yml
+            aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
+            cd ~ && sudo docker-compose pull
+            cd ~ && sudo docker-compose up -d

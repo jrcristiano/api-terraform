@@ -1,0 +1,14 @@
+FROM node:24-alpine
+
+WORKDIR /usr/src/app
+
+COPY package*.json ./
+RUN npm ci --production=false
+
+COPY . .
+RUN npm run build
+
+ENV PORT=3000
+EXPOSE 3000
+
+CMD ["node", "dist/main.js"]

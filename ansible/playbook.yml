@@ -1,0 +1,63 @@
+- name: Deploy api-terraform to EC2
+  hosts: app
+  become: yes
+  vars:
+    app_port: 3000
+    ecr_repository_url: "{{ ecr_repository_url }}"
+  tasks:
+    - name: Install required packages
+      apt:
+        name:
+          - docker.io
+          - docker-compose
+          - awscli
+        state: present
+        update_cache: yes
+
+    - name: Ensure docker service is started
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Create docker-compose file
+      copy:
+        dest: /home/ubuntu/docker-compose.yml
+        content: |
+          version: '3.9'
+          services:
+            api:
+              image: "{{ ecr_repository_url }}:latest"
+              ports:
+                - "{{ app_port }}:{{ app_port }}"
+              restart: unless-stopped
+      owner: ubuntu
+      group: ubuntu
+      mode: '0644'
+
+    - name: Log in to ECR
+      shell: |
+        aws ecr get-login-password --region {{ aws_region }} | docker login --username AWS --password-stdin {{ ecr_repository_url }}
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_key }}"
+      args:
+        executable: /bin/bash
+
+    - name: Pull latest image
+      shell: |
+        cd /home/ubuntu && docker-compose pull
+      args:
+        executable: /bin/bash
+
+    - name: Start the service
+      shell: |
+        cd /home/ubuntu && docker-compose up -d
+      args:
+        executable: /bin/bash
