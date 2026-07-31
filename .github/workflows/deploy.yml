@@ -110,8 +110,8 @@ jobs:
             aws ecr get-login-password --region $AWS_REGION | sudo docker login --username AWS --password-stdin ${{ secrets.ECR_REPOSITORY_URL }}
 
             cd /home/ubuntu
-            DOCKER_IMAGE=${{ secrets.ECR_REPOSITORY_URL }}:latest sudo -E docker compose pull
-            DOCKER_IMAGE=${{ secrets.ECR_REPOSITORY_URL }}:latest sudo -E docker compose up -d --force-recreate
+            sudo DOCKER_IMAGE="${{ secrets.ECR_REPOSITORY_URL }}:latest" docker compose pull
+            sudo DOCKER_IMAGE="${{ secrets.ECR_REPOSITORY_URL }}:latest" docker compose up -d --force-recreate
 
       - name: Smoke test
         id: smoke
@@ -148,4 +148,4 @@ jobs:
             PREVIOUS_IMAGE=$(sudo cat /home/ubuntu/.previous-image)
             echo "Redeploying previous image: $PREVIOUS_IMAGE"
             cd /home/ubuntu
-            DOCKER_IMAGE=$PREVIOUS_IMAGE sudo -E docker compose up -d --force-recreate
+            sudo DOCKER_IMAGE="$PREVIOUS_IMAGE" docker compose up -d --force-recreate
